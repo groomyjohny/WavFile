@@ -18,6 +18,9 @@
     <ClInclude Include="WavFile.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="WavHeader.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
