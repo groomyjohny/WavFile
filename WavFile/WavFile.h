@@ -5,6 +5,12 @@
 
 namespace WavFile
 {
+	template <typename T>
+	void writeToFile(T val, std::ofstream& f)
+	{
+		f.write(&val, sizeof val);
+	}
+
 	class WavHeader //This class was not meant to be used outside WavFile. Setters may leave object in invalid state, use finalize or writeToFile methods to get valid header if possible. If not, it will throw a std::runtime_error with error message.
 	{
 	public:
@@ -17,14 +23,14 @@ namespace WavFile
 			if (subchunk1Id != 0x666d7420) msg << "WavHeader: bad subchunk1Id, expected 0x666d7420 (\"fmt \"), got " << std::hex << subchunk1Id << "\n";
 			if (subchunk1Size != 16) msg << "WavHeader: unexpected subchunk1Size, expected 16, got " << std::dec << subchunk1Size << "\n";
 			if (audioFormat != 1) msg << "WavHeader: unsupported audio format: " << std::dec << audioFormat << ". Only format 1 (uncompressed PCM) supported\n";
-			if (bitsPerSample != 8 || bitsPerSample != 16) msg << "WavHeader: unsupported bitsPerSample value. Only values of 8, 16 are suppored\n";
+			if (bitsPerSample != 8 && bitsPerSample != 16) msg << "WavHeader: unsupported bitsPerSample value. Only values of 8, 16 are suppored\n";
 
 			uint32_t correctBlockAlign = (numChannels*bitsPerSample) / 8;
 			uint32_t correctByteRate = correctBlockAlign * sampleRate;
 			if (byteRate != correctByteRate) msg << "WavHeader: incorrect byteRate. Expected " << correctByteRate << ", got " << byteRate << "\n";
 			if (blockAlign != correctBlockAlign) msg << "WavHeader: incorrect blockAlign. Expected " << correctBlockAlign << ", got " << blockAlign << "\n";
 
-			if (subchunk2Id != 0x64617461) msg << "WavHeader: bad subchunk2Id. Expected 0x64617461 (\"data\"), got " << std::hex << subchunk2Id << "\n";
+			if (subchunk2Id != 0x64617461) msg << "WavHeader: bad subchunk2Id. Expected 0x64617461 (\"data\"), got " << std::hex << subchunk2Id << std::dec << "\n";
 
 			std::string s_msg = msg.str();
 			if (s_msg.empty()) return true;
@@ -35,7 +41,7 @@ namespace WavFile
 		{
 			if (this->duration == -1)
 			{
-				return double(getSubchunk2Size()) / ((getNumChannels()*getBitsPerSample()*getSampleRate()) / 8)
+				return double(getSubchunk2Size()) / ((getNumChannels() * getBitsPerSample() * getSampleRate()) / 8);
 			}
 			else return this->duration;
 		}
@@ -76,6 +82,24 @@ namespace WavFile
 			return byteRate;
 		}
 
+		void write(std::ofstream& f)
+		{
+			this->verify();
+			writeToFile(chunkId, f);
+			writeToFile(chunkSize, f);
+			writeToFile(format, f);
+			writeToFile(subchunk1Id, f);
+			writeToFile(subchunk1Size, f);
+			writeToFile(audioFormat, f);
+			writeToFile(numChannels, f);
+			writeToFile(sampleRate, f);
+			writeToFile(byteRate, f);
+			writeToFile(blockAlign, f);
+			writeToFile(bitsPerSample, f);
+			writeToFile(subchunk2Id, f);
+			writeToFile(subchunk2Size, f);
+		}
+
 	private:
 		uint32_t chunkId = 0;
 		uint32_t chunkSize = 0;
@@ -90,9 +114,7 @@ namespace WavFile
 		uint16_t bitsPerSample = 0;
 		uint32_t subchunk2Id = 0;
 		uint32_t subchunk2Size = 0;
-		double duration = -1;
-
-		
+		double duration = -1;		
 
 		/*void setSampleRate(uint32_t sampleRate)
 		{
@@ -121,7 +143,7 @@ namespace WavFile
 	};
 
 	//Samples are represented as an array a[x][y], where is x is channel number, y - samples of channel x as doubles in range [-1...1].
-	class WavFile
+	class WavFileShared
 	{
 	public:
 		std::vector<std::vector<double>> getSamples()
@@ -133,11 +155,43 @@ namespace WavFile
 			return samples[channelNum];
 		}
 
+		WavHeader getHeader()
+		{
+			return header;
+		}
+
+		size_t getSampleIndexAtTime(double t)
+		{
+			return t * header.getNumChannels() * header.getSampleRate();
+		}
+
+		double getSampleAtIndex(size_t i, size_t channelNumber = 0)
+		{
+			return samples[channelNumber][i];
+		}
+
+		void setSampleAtIndex(size_t i, double value, size_t channelNumber = 0)
+		{
+			samples[channelNumber][i] = value;
+		}
+
+		double getSampleAt(double t, size_t channelNumber = 0)
+		{
+			auto i = getSampleIndexAtTime(t);
+			return getSampleAtIndex(i, channelNumber);
+		}
+		
+		void setSampleAt(double t, double value, size_t channelNumber = 0)
+		{
+			auto i = getSampleIndexAtTime(t);
+			samples[channelNumber][t] = value;
+		}
+
 		/*//Samples are represented as doubles in range [-1...1]. Use at your own risk, as class internals do not expect external sample changes
 		std::vector<std::vector<double>>& getSamplesReference();*/
 
 		//Sets sample rate of a file. Setting convertSamples to false will skip sample conversion, which will change the speed and duration of the file.
-		void setSampleRate(uint32_t newSampleRate, bool convertSamples = true)
+		/*void setSampleRate(uint32_t newSampleRate, bool convertSamples = true)
 		{
 			uint32_t oldSampleRate = header.getSampleRate();
 			double oldSampleTime = 1.0 / oldSampleRate;
@@ -160,13 +214,13 @@ namespace WavFile
 					oldChan = newChan;
 				}
 			}
-		}
+		}*/
 
 		//Sets new number of channels. Newly created channels will be initialized with zeros if init is 1, special scheme below if 2, and left unitialized if 0. If init == 2, then:
 		//If newNumChannels < oldNumChannels, then channels with indices[newNumChannels-1...oldNumChannels-1] will be removed;
 		//If newNumChannels > oldNumChannels, new channels will be copied from old ones. Channel n will be a copy of channel (n % oldNumChannels).
 		//If newNumChannels == oldNumChannels, no changes are made
-		void setNumChannels(uint16_t newNumChannels, int init = 1)
+		/*void setNumChannels(uint16_t newNumChannels, int init = 1)
 		{
 			uint16_t oldNumChannels = header.numChannels;
 			header.numChannels = newNumChannels;
@@ -182,7 +236,7 @@ namespace WavFile
 					}
 				}
 			}
-		}
+		}*/
 	private:
 		WavHeader header;
 		std::fstream file;
