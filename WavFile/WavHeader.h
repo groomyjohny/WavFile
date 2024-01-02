@@ -26,7 +26,7 @@ namespace WavFile
 			subchunk1Size = 16;
 			audioFormat = 1;
 			this->bitsPerSample = bitsPerSample;
-			blockAlign = (numChannels * bitsPerSample) / 8;
+			blockAlign = numChannels * (bitsPerSample / 8);
 			byteRate = blockAlign * sampleRate;
 			subchunk2Id = 0x64617461;
 			this->verify();
